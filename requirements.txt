@@ -1,6 +1,5 @@
 streamlit
 pandas
 plotly
-sqlite3
 streamlit-option-menu
 streamlit-modal
