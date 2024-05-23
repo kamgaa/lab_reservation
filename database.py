@@ -1,8 +1,13 @@
 import sqlite3
 from config import DATABASE_FILE
 
+DATABASE_FILE = 'reservation.db'
+
+def get_connection():
+    return sqlite3.connect(DATABASE_FILE)
+
 def init_db():
-    conn = sqlite3.connect(DATABASE_FILE)
+    conn = get_connection()
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS reservations (
