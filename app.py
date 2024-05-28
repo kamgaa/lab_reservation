@@ -243,7 +243,7 @@ def main_page():
                     name=team,
                     marker=dict(color=team_data['time'].apply(lambda x: TEAM_COLORS[team] if team in TEAM_COLORS else 'gray')),
                     showlegend=False if team == '' else True,  # 빈 팀은 레전드 표시 안 함
-                    width=0.8
+                    #width=0.8
                 ))
 
             fig.update_layout(
@@ -252,7 +252,7 @@ def main_page():
                 yaxis_title=" ",
                 yaxis=dict(tickvals=[1], ticktext=['1']),
                 barmode='stack',
-                xaxis=dict(type='category', categoryorder='category ascending', tickangle=0, dtick=2)
+                xaxis=dict(type='category', categoryorder='category ascending')#, tickangle=0, dtick=2)
             )
 
             st.plotly_chart(fig)
