@@ -7,6 +7,7 @@ from streamlit_option_menu import option_menu
 from config import PRIMARY_COLOR, SECONDARY_COLOR, ACCENT_COLOR, BACKGROUND_COLOR, TEXT_COLOR, DATABASE_FILE
 from database import add_user, check_user, init_db, update_user, get_reservations, get_connection, insert_reservation
 from streamlit_modal import Modal
+import pytz
 
 TEAM_COLORS = {
     "CAD_UAV": "#FF5733",
@@ -143,12 +144,17 @@ def main_page():
             return
 
         st.write(f"이번 주 예약 가능 시간: {remaining_time} 시간")
+
+        # 한국 시간대 설정
+        kst = pytz.timezone('Asia/Seoul')
+        #current_time_kst = datetime.now(kst)
+        
         
         # 시간대 리스트 생성
         time_slots = [time(hour, minute).strftime('%H:%M') for hour in range(24) for minute in (0, 30)]
         
         # 현재 시간으로부터 30분 후의 시간 설정
-        next_half_hour = (datetime.now() + timedelta(minutes=30)).replace(second=0, microsecond=0)
+        next_half_hour = (datetime.now(kst) + timedelta(minutes=30)).replace(second=0, microsecond=0)
         if next_half_hour.minute < 30:
             next_half_hour = next_half_hour.replace(minute=30)
         else:
