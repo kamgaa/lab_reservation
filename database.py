@@ -1,10 +1,12 @@
 import sqlite3
+import pandas as pd
 from config import DATABASE_FILE
 
 DATABASE_FILE = 'reservation.db'
 
 def get_connection():
     return sqlite3.connect(DATABASE_FILE)
+
 
 def init_db():
     conn = get_connection()
@@ -41,7 +43,7 @@ def init_db():
     conn.close()
 
 def add_user(student_id, name, password, team, team_color):
-    conn = sqlite3.connect(DATABASE_FILE)
+    conn = get_connection()
     c = conn.cursor()
     c.execute("INSERT INTO users (student_id, name, password, team, team_color) VALUES (?, ?, ?, ?, ?)",
               (student_id, name, password, team, team_color))
@@ -49,16 +51,47 @@ def add_user(student_id, name, password, team, team_color):
     conn.close()
 
 def check_user(student_id, password):
-    conn = sqlite3.connect(DATABASE_FILE)
+    conn = get_connection()
     c = conn.cursor()
     c.execute("SELECT * FROM users WHERE student_id = ? AND password = ?", (student_id, password))
     user = c.fetchone()
     conn.close()
     return user
 
-def update_user(old_student_id, new_name, new_team, new_student_id, new_team_color):
-    conn = sqlite3.connect(DATABASE_FILE)
+def update_team_color(team, new_color):
+    conn = get_connection()
     c = conn.cursor()
-    c.execute("UPDATE users SET name = ?, team = ?, student_id = ?, team_color = ? WHERE student_id = ?", (new_name, new_team, new_student_id, new_team_color, old_student_id))
+    c.execute("UPDATE users SET team_color = ? WHERE team = ?", (new_color, team))
     conn.commit()
     conn.close()
+
+def update_user(student_id, new_name, new_team, new_student_id, new_team_color):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE users SET name = ?, team = ?, student_id = ?, team_color = ? WHERE student_id = ?", 
+              (new_name, new_team, new_student_id, new_team_color, student_id))
+    conn.commit()
+    conn.close()
+    update_team_color(new_team, new_team_color)
+
+def insert_reservation(student_id, start_time, end_time, reservation_date):
+    conn = get_connection()
+    c = conn.cursor()
+    query = """
+        INSERT INTO reservations (student_id, start_time, end_time, reservation_date)
+        VALUES (?, ?, ?, ?)
+    """
+    c.execute(query, (student_id, start_time, end_time, reservation_date))
+    conn.commit()
+    conn.close()
+
+def get_reservations():
+    conn = get_connection()
+    query = """
+        SELECT r.*, u.team 
+        FROM reservations r
+        JOIN users u ON r.student_id = u.student_id
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df

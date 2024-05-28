@@ -1,62 +1,25 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-#import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, date, timedelta, time
 from streamlit_option_menu import option_menu
 from config import PRIMARY_COLOR, SECONDARY_COLOR, ACCENT_COLOR, BACKGROUND_COLOR, TEXT_COLOR, DATABASE_FILE
-from database import add_user, check_user, init_db, update_user
+from database import add_user, check_user, init_db, update_user, get_reservations, get_connection, insert_reservation
 from streamlit_modal import Modal
+
+TEAM_COLORS = {
+    "CAD_UAV": "#FF5733",
+    "Palletrone": "#33FF57",
+    "Ja!warm": "#3357FF",
+    "Crazyflie": "#FF33A8"
+}
 
 # 페이지 설정
 st.set_page_config(page_title="실험실 예약 시스템", layout="wide")
 
 # 데이터베이스 초기화
 init_db()
-
-# 데이터베이스 연결 함수
-def get_connection():
-    return sqlite3.connect(DATABASE_FILE)
-
-# 예약 데이터 삽입 함수
-def insert_reservation(student_id, start_time, end_time, reservation_date):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("INSERT INTO reservations (student_id, start_time, end_time, reservation_date) VALUES (?, ?, ?, ?)",
-              (student_id, start_time, end_time, reservation_date))
-    conn.commit()
-    conn.close()
-
-# 예약 데이터 조회 함수
-def get_reservations():
-    conn = get_connection()
-    df = pd.read_sql_query("SELECT reservations.*, users.name, users.team, users.team_color FROM reservations JOIN users ON reservations.student_id = users.student_id", conn)
-    conn.close()
-    return df
-
-# 이번 주 예약된 시간을 계산하는 함수
-def get_reserved_time(student_id):
-    conn = get_connection()
-    today = date.today()
-    start_of_week = today - timedelta(days=today.weekday())  # 월요일
-    end_of_week = start_of_week + timedelta(days=6)  # 일요일
-
-    df = pd.read_sql_query(f"""
-        SELECT * FROM reservations
-        WHERE student_id = '{student_id}'
-        AND reservation_date BETWEEN '{start_of_week}' AND '{end_of_week}'
-    """, conn)
-
-    total_reserved_time = 0
-    for _, row in df.iterrows():
-        start_time = datetime.strptime(row['start_time'], '%H:%M:%S').time()
-        end_time = datetime.strptime(row['end_time'], '%H:%M:%S').time()
-        reserved_hours = (datetime.combine(date.min, end_time) - datetime.combine(date.min, start_time)).seconds / 3600
-        total_reserved_time += reserved_hours
-
-    conn.close()
-    return total_reserved_time
 
 # 로그인 상태 초기화
 if 'logged_in' not in st.session_state:
@@ -92,10 +55,8 @@ def login_page():
             st.session_state['user_name'] = user[2]  # name
             st.session_state['team'] = user[4] if len(user) > 4 else None  # team (user[3] 인덱스는 password)
             st.session_state['team_color'] = user[5] if len(user) > 5 else color_palette[0]  # team_color
+            st.session_state['is_admin'] = (student_id == "24510047")  # 관리자인지 확인
             st.session_state['register'] = False  # 회원가입 상태 초기화
-
-            if student_id == "admin_id":  # 예: 관리자의 학번을 특정 값으로 설정
-                st.session_state['is_admin'] = True
 
             st.success("로그인 성공")
             st.experimental_rerun()
@@ -111,14 +72,12 @@ def register_page():
     new_student_id = st.text_input("학번 (8자리 숫자)", key="register_student_id")
     new_name = st.text_input("이름 (한글)", key="register_name")
     new_password = st.text_input("비밀번호", type="password", key="register_password")
-    new_team = st.selectbox("팀을 선택하세요", ["팀 A", "팀 B", "팀 C"], key="register_team")
-    
-    st.write("팀 컬러를 선택하세요")
-    color_selected = st.radio("", color_palette, format_func=lambda color: f'<div style="background-color:{color}; width: 20px; height: 20px; border-radius: 50%;"></div>', key="register_team_color")
+    new_team = st.selectbox("팀을 선택하세요", ["CAD_UAV", "Palletrone", "Ja!warm", "Crazyflie"], key="register_team")
 
     if st.button("회원가입", key="register_button"):
         if len(new_student_id) == 8 and new_student_id.isdigit() and all('\uAC00' <= char <= '\uD7A3' for char in new_name):
-            add_user(new_student_id, new_name, new_password, new_team, color_selected)
+            team_color = TEAM_COLORS[new_team]
+            add_user(new_student_id, new_name, new_password, new_team, team_color)
             st.success("회원가입이 완료되었습니다.")
             st.session_state['register'] = False  # 회원가입 완료 후 로그인 페이지로 이동
             st.experimental_rerun()
@@ -128,8 +87,33 @@ def register_page():
         st.session_state['register'] = False
         st.experimental_rerun()
 
+def get_reserved_time(team):
+    conn = get_connection()
+    today = date.today()
+    start_of_week = today - timedelta(days=today.weekday())  # 월요일
+    end_of_week = start_of_week + timedelta(days=6)  # 일요일
+
+    query = """
+        SELECT * FROM reservations
+        WHERE student_id IN (SELECT student_id FROM users WHERE team = ?)
+        AND reservation_date BETWEEN ? AND ?
+    """
+    df = pd.read_sql_query(query, conn, params=(team, start_of_week, end_of_week))
+    conn.close()
+
+    total_reserved_time = 0
+    for _, row in df.iterrows():
+        start_time = datetime.strptime(row['start_time'], '%H:%M').time()
+        end_time = datetime.strptime(row['end_time'], '%H:%M').time()
+        reserved_hours = (datetime.combine(date.min, end_time) - datetime.combine(date.min, start_time)).seconds / 3600
+        total_reserved_time += reserved_hours
+
+    return total_reserved_time
 # 메인 페이지
+#import plotly.graph_objects as go
+
 def main_page():
+    #st.set_page_config(page_title="실험실 예약 시스템", layout="wide")
     st.title("실험실 예약 시스템")
     st.write(f"환영합니다, {st.session_state['user_name']}님 (학번: {st.session_state['student_id']})")
 
@@ -144,86 +128,147 @@ def main_page():
         )
 
     if selected == "예약":
+        st.subheader("예약 페이지")
+        
         # 날짜 선택
-        st.subheader("예약 날짜 선택")
         selected_date = st.date_input("예약 날짜를 선택하세요", value=date.today(), min_value=date.today())
         st.session_state['selected_date'] = selected_date
 
-        # 시간 선택 타일
-        st.subheader("예약 시간 선택")
-        times = [time(hour, minute) for hour in range(24) for minute in (0, 30)]
-        
-        now = datetime.now()
-        available_times = [t for t in times if (selected_date > date.today()) or (selected_date == date.today() and datetime.combine(date.today(), t) > now)]
-        
-        selected_times = st.multiselect("예약할 시간을 선택하세요", available_times, format_func=lambda t: t.strftime("%H:%M"))
+        # 현재 팀의 예약된 시간 계산
+        reserved_time = get_reserved_time(st.session_state['team'])
+        remaining_time = 24 - reserved_time
 
-        # 예약 시간 검증 및 설정
-        if selected_times:
-            start_time = min(selected_times)
-            end_time = max(selected_times)
+        if remaining_time <= 0:
+            st.warning("이번 주에 더 이상 예약할 수 없습니다.")
+            return
 
-            if start_time >= end_time:
-                st.error("종료 시간은 시작 시간 이후여야 합니다.")
-            elif (datetime.combine(date.today(), end_time) - datetime.combine(date.today(), start_time)).seconds % 1800 != 0:
-                st.error("예약 시간은 30분 단위로 설정되어야 합니다.")
+        st.write(f"이번 주 예약 가능 시간: {remaining_time} 시간")
+        
+        # 시간대 리스트 생성
+        time_slots = [time(hour, minute).strftime('%H:%M') for hour in range(24) for minute in (0, 30)]
+        
+        # 현재 시간으로부터 30분 후의 시간 설정
+        next_half_hour = (datetime.now() + timedelta(minutes=30)).replace(second=0, microsecond=0)
+        if next_half_hour.minute < 30:
+            next_half_hour = next_half_hour.replace(minute=30)
+        else:
+            next_half_hour = next_half_hour.replace(minute=0) + timedelta(hours=1)
+        
+        current_time_str = next_half_hour.strftime('%H:%M')
+
+        # 시간 입력
+        start_time = st.selectbox("시작 시간", options=time_slots, index=time_slots.index(current_time_str))
+        end_time = st.selectbox("종료 시간", options=time_slots, index=time_slots.index((next_half_hour + timedelta(hours=1)).strftime('%H:%M')))
+
+        start_time_dt = datetime.strptime(start_time, '%H:%M').time()
+        end_time_dt = datetime.strptime(end_time, '%H:%M').time()
+
+        if start_time_dt >= end_time_dt:
+            st.error("종료 시간은 시작 시간 이후여야 합니다.")
+        elif selected_date == date.today() and start_time_dt <= datetime.now().time():
+            st.error("현재 시간 이후로 예약할 수 있습니다.")
+        else:
+            # 중복 예약 방지 로직 추가
+            conn = get_connection()
+            overlapping_reservations = pd.read_sql_query("""
+                SELECT * FROM reservations 
+                WHERE reservation_date = ? 
+                AND (
+                    (start_time < ? AND end_time > ?)
+                )
+            """, conn, params=(selected_date, end_time, start_time))
+            conn.close()
+
+            if overlapping_reservations.empty:
+                # 예약 시간 검증 및 설정
+                reservation_duration = (datetime.combine(date.today(), end_time_dt) - datetime.combine(date.today(), start_time_dt)).seconds / 3600
+                if reservation_duration > remaining_time:
+                    st.error(f"남은 예약 가능 시간을 초과했습니다. 남은 시간: {remaining_time} 시간")
+                else:
+                    # 예약 버튼
+                    if st.button("예약하기", key="reservation_confirm_button"):
+                        insert_reservation(st.session_state['student_id'], start_time, end_time, selected_date)
+                        st.success("예약이 완료되었습니다.")
+                        st.experimental_rerun()
             else:
-                # 예약 버튼
-                if st.button("예약하기", key="reservation_confirm_button"):
-                    insert_reservation(st.session_state['student_id'], start_time.strftime('%H:%M:%S'), end_time.strftime('%H:%M:%S'), selected_date)
-                    st.success("예약이 완료되었습니다.")
+                st.error("다른 팀이 이미 해당 시간에 예약을 했습니다.")
 
         # 예약 목록 표시
         st.subheader("예약 목록")
         reservations = get_reservations()
         st.dataframe(reservations)
 
-# 예약 현황 간트 차트
-        st.subheader("예약 현황")
-        gantt_data = []
-        for _, row in reservations.iterrows():
-            reservation_date = datetime.strptime(row['reservation_date'], '%Y-%m-%d').date()
-            start_time = datetime.strptime(row['start_time'], '%H:%M:%S').time()
-            end_time = datetime.strptime(row['end_time'], '%H:%M:%S').time()
-            gantt_data.append(dict(
-                Task=row['team'],
-                Start=datetime.combine(reservation_date, start_time),
-                Finish=datetime.combine(reservation_date, end_time),
-                Resource=row['team'],
-                Color=row['team_color']
-            ))
+        # 예약 현황 바 차트
+        st.subheader(f"{selected_date} 예약 현황")
+        filtered_reservations = reservations[reservations['reservation_date'] == selected_date.strftime('%Y-%m-%d')]
+        
+        # 예약 데이터를 시간대별로 그룹화
+        time_blocks = [(datetime.combine(selected_date, time(hour, 0)), datetime.combine(selected_date, time(hour + 1 if hour < 23 else 0, 0))) for hour in range(24)]
+        reservation_summary = {block[0]: [] for block in time_blocks}
 
-        fig = go.Figure()
+        for _, row in filtered_reservations.iterrows():
+            reservation_start = datetime.combine(selected_date, datetime.strptime(row['start_time'], '%H:%M').time())
+            reservation_end = datetime.combine(selected_date, datetime.strptime(row['end_time'], '%H:%M').time())
+            for block_start, block_end in time_blocks:
+                if reservation_start < block_end and reservation_end > block_start:
+                    reservation_summary[block_start].append(row['team'])
 
-        for task in gantt_data:
-            fig.add_trace(go.Bar(
-                x=[task['Start'], task['Finish']],
-                y=[task['Task'], task['Task']],
-                orientation='h',
-                marker=dict(color=task['Color']),
-                showlegend=False,
-                hoverinfo='x+y'
-            ))
+        bar_data = []
+        for block_start, teams in reservation_summary.items():
+            team_counts = {team: teams.count(team) for team in set(teams)}
+            for team, count in team_counts.items():
+                bar_data.append({
+                    'time': block_start.strftime('%H:%M'),
+                    'team': team,
+                    'count': 1  # 예약 건수는 1로 고정
+                })
 
-        fig.update_layout(
-            barmode='stack',
-            title="팀별 예약 현황",
-            xaxis_title="시간",
-            yaxis_title="팀",
-            height=600,
-        )
+        bar_df = pd.DataFrame(bar_data)
 
-        st.plotly_chart(fig)     
+        # 00시부터 24시까지 모든 시간을 보여주기 위해 빈 데이터도 포함
+        empty_time_slots = [{'time': block_start.strftime('%H:%M'), 'team': '', 'count': 0} for block_start, _ in reservation_summary.items()]
+        empty_df = pd.DataFrame(empty_time_slots)
+
+        # 예약 데이터와 빈 데이터를 병합
+        bar_df = pd.concat([bar_df, empty_df]).drop_duplicates(subset=['time', 'team']).reset_index(drop=True)
+
+        if not bar_df.empty:
+            fig = go.Figure()
+
+            for team in bar_df['team'].unique():
+                team_data = bar_df[bar_df['team'] == team]
+                fig.add_trace(go.Bar(
+                    x=team_data['time'],
+                    y=team_data['count'],
+                    name=team,
+                    marker=dict(color=team_data['time'].apply(lambda x: TEAM_COLORS[team] if team in TEAM_COLORS else 'gray')),
+                    showlegend=False if team == '' else True,  # 빈 팀은 레전드 표시 안 함
+                    width=0.8
+                ))
+
+            fig.update_layout(
+                title=f"{selected_date} 팀별 예약 현황",
+                xaxis_title="예약 시간",
+                yaxis_title=" ",
+                yaxis=dict(tickvals=[1], ticktext=['1']),
+                barmode='stack',
+                xaxis=dict(type='category', categoryorder='category ascending', tickangle=0, dtick=2)
+            )
+
+            st.plotly_chart(fig)
+        else:
+            st.write("선택한 날짜에 예약이 없습니다.")
 
     elif selected == "마이 페이지":
         my_page()
     elif selected == "관리자 페이지" and st.session_state['is_admin']:
         admin_page()
 
+    
 # 마이 페이지
 def my_page():
     st.subheader("마이 페이지")
-    st.write(f"환영합니다, {st.session_state['user_name']}님 (학번: {st.session_state['student_id']}, 팀: {st.session_state['team']})")
+    st.write(f"환영합니다, {st.session_state['user_name']}님 (학번: {st.session_state['student_id']}, 팀: {st.session_state['team']}, 팀 컬러: {st.session_state['team_color']})")
 
     # 개인정보 수정
     if st.button("개인정보 수정"):
@@ -232,25 +277,21 @@ def my_page():
     if st.session_state.get('edit_profile', False):
         new_name = st.text_input("이름 (한글)", value=st.session_state['user_name'])
         new_student_id = st.text_input("학번 (8자리 숫자)", value=st.session_state['student_id'])
-        new_team = st.selectbox("팀을 선택하세요", ["팀 A", "팀 B", "팀 C"], index=0)
+        new_team = st.selectbox("팀을 선택하세요", ["CAD_UAV", "Palletrone", "Ja!warm", "Crazyflie"], index=0)
         
-        st.write("팀 컬러를 선택하세요")
-        if st.session_state['team_color'] is None:
-            st.session_state['team_color'] = color_palette[0]
-        new_team_color = st.radio("", color_palette, index=color_palette.index(st.session_state['team_color']), format_func=lambda color: f'<div style="background-color:{color}; width: 20px; height: 20px; border-radius: 50%;"></div>')
-
         if st.button("저장", key="save_profile"):
-            update_user(st.session_state['student_id'], new_name, new_team, new_student_id, new_team_color)
+            team_color = TEAM_COLORS[new_team]
+            update_user(st.session_state['student_id'], new_name, new_team, new_student_id, team_color)
             st.session_state['user_name'] = new_name
             st.session_state['team'] = new_team
             st.session_state['student_id'] = new_student_id
-            st.session_state['team_color'] = new_team_color
+            st.session_state['team_color'] = team_color
             st.success("개인정보가 수정되었습니다.")
             st.session_state['edit_profile'] = False
             st.experimental_rerun()
 
-    # 이번 주 예약된 시간 계산 및 표시
-    reserved_time = get_reserved_time(st.session_state['student_id'])
+    # 현재 팀의 예약된 시간 계산 및 표시
+    reserved_time = get_reserved_time(st.session_state['team'])
     remaining_time = 24 - reserved_time
 
     st.write(f"이번 주 예약 가능 시간: {remaining_time} 시간")
@@ -270,7 +311,7 @@ def my_page():
         x=[reserved_time],
         name="예약한 시간",
         orientation='h',
-        marker=dict(color='blue')  # 원하는 색으로 변경
+        marker=dict(color=st.session_state['team_color'])
     ))
 
     fig.update_layout(
@@ -287,7 +328,55 @@ def my_page():
 # 관리자 페이지
 def admin_page():
     st.subheader("관리자 페이지")
-    st.write("여기에서 관리자 기능을 구현할 수 있습니다.")
+
+    # 모든 유저 목록 조회
+    conn = get_connection()
+    users = pd.read_sql_query("SELECT * FROM users", conn)
+    conn.close()
+
+    # 유저 선택
+    selected_user = st.selectbox("유저를 선택하세요", users['student_id'].tolist())
+
+    if selected_user:
+        user_info = users[users['student_id'] == selected_user].iloc[0]
+        st.write(f"이름: {user_info['name']}")
+        st.write(f"학번: {user_info['student_id']}")
+        st.write(f"팀: {user_info['team']}")
+        st.write(f"팀 컬러: {user_info['team_color']}")
+
+        # 해당 유저의 예약 정보 조회
+        conn = get_connection()
+        reservations = pd.read_sql_query(f"SELECT * FROM reservations WHERE student_id = '{selected_user}'", conn)
+        conn.close()
+
+        st.write("예약 정보:")
+        for _, row in reservations.iterrows():
+            st.write(f"날짜: {row['reservation_date']}, 시작 시간: {row['start_time']}, 종료 시간: {row['end_time']}")
+
+            # 예약 수정
+            if st.button(f"수정 ({row['id']})"):
+                with st.form(key=f"edit_reservation_{row['id']}"):
+                    new_start_time = st.time_input("새 시작 시간", value=datetime.strptime(row['start_time'], '%H:%M:%S').time())
+                    new_end_time = st.time_input("새 종료 시간", value=datetime.strptime(row['end_time'], '%H:%M:%S').time())
+                    if st.form_submit_button("저장"):
+                        conn = get_connection()
+                        c = conn.cursor()
+                        c.execute("UPDATE reservations SET start_time = ?, end_time = ? WHERE id = ?", 
+                                  (new_start_time.strftime('%H:%M:%S'), new_end_time.strftime('%H:%M:%S'), row['id']))
+                        conn.commit()
+                        conn.close()
+                        st.success("예약이 수정되었습니다.")
+                        st.experimental_rerun()
+
+            # 예약 삭제
+            if st.button(f"삭제 ({row['id']})"):
+                conn = get_connection()
+                c = conn.cursor()
+                c.execute("DELETE FROM reservations WHERE id = ?", (row['id'],))
+                conn.commit()
+                conn.close()
+                st.success("예약이 삭제되었습니다.")
+                st.experimental_rerun()
 
 # 페이지 라우팅
 if st.session_state['logged_in']:
