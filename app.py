@@ -8,7 +8,7 @@ from config import PRIMARY_COLOR, SECONDARY_COLOR, ACCENT_COLOR, BACKGROUND_COLO
 from database import add_user, check_user, init_db, update_user, get_reservations, get_connection, insert_reservation
 from streamlit_modal import Modal
 import pytz
-
+import os
 import requests
 from github import Github
 
