@@ -8,6 +8,35 @@ from config import PRIMARY_COLOR, SECONDARY_COLOR, ACCENT_COLOR, BACKGROUND_COLO
 from database import add_user, check_user, init_db, update_user, get_reservations, get_connection, insert_reservation
 from streamlit_modal import Modal
 import pytz
+import os
+import requests
+from github import Github
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
+REPO_NAME = "kamgaa/lab_reservation"
+
+def download_db_from_github():
+    url = "https://github.com/kamgaa/lab_reservation/raw/main/reservation.db"
+    response = requests.get(url)
+    if response.status_code == 200:
+        with open("reservation.db", "wb") as f:
+            f.write(response.content)
+    else:
+        print("Failed to download database file from GitHub.")
+
+def upload_db_to_github():
+    g = Github(GITHUB_TOKEN)
+    repo = g.get_repo(REPO_NAME)
+    with open("reservation.db", "rb") as file:
+        content = file.read()
+    try:
+        contents = repo.get_contents("reservation.db")
+        repo.update_file(contents.path, "Update reservation database", content, contents.sha)
+    except:
+        repo.create_file("reservation.db", "Create reservation database", content)
+
+if not os.path.exists("reservation.db"):
+    download_db_from_github()
+
 
 TEAM_COLORS = {
     "CAD_UAV": "#FF5733",
@@ -21,6 +50,12 @@ st.set_page_config(page_title="실험실 예약 시스템", layout="wide")
 
 # 데이터베이스 초기화
 init_db()
+
+# 예제: 예약을 저장할 때 데이터베이스를 GitHub에 업로드합니다.
+def save_reservation(student_id, start_time, end_time, reservation_date):
+    insert_reservation(student_id, start_time, end_time, reservation_date)
+    upload_db_to_github()
+
 
 # 로그인 상태 초기화
 if 'logged_in' not in st.session_state:
