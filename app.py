@@ -11,7 +11,8 @@ import pytz
 import os
 import requests
 from github import Github
-GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
+
+GITHUB_TOKEN = st.secrets["general"]["GITHUB_TOKEN"]
 REPO_NAME = "kamgaa/lab_reservation"
 
 def download_db_from_github():
