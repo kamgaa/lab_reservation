@@ -4,3 +4,6 @@ plotly
 streamlit-option-menu
 streamlit-modal
 pytz
+
+requests
+PyGithub
