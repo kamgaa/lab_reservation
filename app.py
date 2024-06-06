@@ -35,7 +35,12 @@ def upload_db_to_github():
         repo.create_file("reservation.db", "Create reservation database", content)
 
 if not os.path.exists("reservation.db"):
-    download_db_from_github()
+    try:
+        download_db_from_github()
+    except Exception as e:
+        st.error(f"Failed to download database from GitHub: {e}")
+        # 데이터베이스 파일이 없는 경우 새로 생성
+        init_db()
 
 
 TEAM_COLORS = {
