@@ -12,7 +12,7 @@ import os
 import requests
 from github import Github
 
-GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
+GITHUB_TOKEN = st.secrets["general"]["GITHUB_TOKEN"]
 REPO_NAME = "kamgaa/lab_reservation"
 
 def download_db_from_github():
