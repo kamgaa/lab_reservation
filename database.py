@@ -95,3 +95,22 @@ def get_reservations():
     df = pd.read_sql_query(query, conn)
     conn.close()
     return df
+
+def insert_users_from_session(users):
+    conn = get_connection()
+    c = conn.cursor()
+    for user in users:
+        c.execute("INSERT INTO users (student_id, name, password, team, team_color) VALUES (?, ?, ?, ?, ?)",
+                  (user['student_id'], user['name'], user['password'], user['team'], user['team_color']))
+    conn.commit()
+    conn.close()
+
+def insert_reservations_from_session(reservations):
+    conn = get_connection()
+    c = conn.cursor()
+    for reservation in reservations:
+        c.execute("INSERT INTO reservations (student_id, start_time, end_time, reservation_date) VALUES (?, ?, ?, ?)",
+                  (reservation['student_id'], reservation['start_time'], reservation['end_time'], reservation['reservation_date']))
+    conn.commit()
+    conn.close()
+    
