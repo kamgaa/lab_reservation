@@ -5,7 +5,8 @@ import plotly.graph_objects as go
 from datetime import datetime, date, timedelta, time
 from streamlit_option_menu import option_menu
 from config import PRIMARY_COLOR, SECONDARY_COLOR, ACCENT_COLOR, BACKGROUND_COLOR, TEXT_COLOR, DATABASE_FILE
-from database import add_user, check_user, init_db, update_user, get_reservations, get_connection, insert_reservation
+from database import add_user, check_user, init_db, update_user, get_reservations, get_connection, insert_reservation, insert_users_from_session, insert_reservations_from_session
+from streamlit_modal import Modal
 from streamlit_modal import Modal
 import pytz
 import os
@@ -50,7 +51,20 @@ TEAM_COLORS = {
     "Ja!warm": "#3357FF",
     "Crazyflie": "#FF33A8"
 }
+def save_to_db():
+    if 'users' in st.session_state:
+        insert_users_from_session(st.session_state['users'])
+    if 'reservations' in st.session_state:
+        insert_reservations_from_session(st.session_state['reservations'])
+    upload_db_to_github()
 
+if not os.path.exists("reservation.db"):
+    try:
+        download_db_from_github()
+    except Exception as e:
+        st.error(f"Failed to download database from GitHub: {e}")
+        # 데이터베이스 파일이 없는 경우 새로 생성
+        init_db()
 # 페이지 설정
 st.set_page_config(page_title="실험실 예약 시스템", layout="wide")
 
