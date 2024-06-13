@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -5,25 +6,32 @@ import plotly.graph_objects as go
 from datetime import datetime, date, timedelta, time
 from streamlit_option_menu import option_menu
 from config import PRIMARY_COLOR, SECONDARY_COLOR, ACCENT_COLOR, BACKGROUND_COLOR, TEXT_COLOR, DATABASE_FILE
-from database import add_user, check_user, init_db, update_user, get_reservations, get_connection, insert_reservation, insert_users_from_session, insert_reservations_from_session
-from streamlit_modal import Modal
+from database import add_user, check_user, init_db, get_reservations, get_users, insert_users_from_cache, insert_reservations_from_cache, insert_reservation
 from streamlit_modal import Modal
 import pytz
-import os
 import requests
 from github import Github
 
+# GitHub 토큰을 Streamlit secrets에서 가져옵니다.
 GITHUB_TOKEN = st.secrets["general"]["GITHUB_TOKEN"]
 REPO_NAME = "kamgaa/lab_reservation"
 
+@st.cache_resource
 def download_db_from_github():
-    url = "https://github.com/kamgaa/lab_reservation/raw/main/reservation.db"
+    url = f"https://github.com/{REPO_NAME}/raw/main/reservation.db"
     response = requests.get(url)
     if response.status_code == 200:
         with open("reservation.db", "wb") as f:
             f.write(response.content)
     else:
-        print("Failed to download database file from GitHub.")
+        st.error("Failed to download database file from GitHub.")
+        st.stop()
+
+@st.cache_resource
+def load_from_db():
+    users = get_users().to_dict(orient='records')
+    reservations = get_reservations().to_dict(orient='records')
+    return users, reservations
 
 def upload_db_to_github():
     g = Github(GITHUB_TOKEN)
@@ -31,33 +39,19 @@ def upload_db_to_github():
     with open("reservation.db", "rb") as file:
         content = file.read()
     try:
-        contents = repo.get_contents("reservation.db")
-        repo.update_file(contents.path, "Update reservation database", content, contents.sha)
+        contents = repo.get_contents("reservation.db", ref="main")
+        repo.update_file(contents.path, "Update reservation database", content, contents.sha, branch="main")
     except:
-        repo.create_file("reservation.db", "Create reservation database", content)
+        repo.create_file("reservation.db", "Create reservation database", content, branch="main")
 
-if not os.path.exists("reservation.db"):
-    try:
-        download_db_from_github()
-    except Exception as e:
-        st.error(f"Failed to download database from GitHub: {e}")
-        # 데이터베이스 파일이 없는 경우 새로 생성
-        init_db()
-
-
-TEAM_COLORS = {
-    "CAD_UAV": "#FF5733",
-    "Palletrone": "#33FF57",
-    "Ja!warm": "#3357FF",
-    "Crazyflie": "#FF33A8"
-}
 def save_to_db():
     if 'users' in st.session_state:
-        insert_users_from_session(st.session_state['users'])
+        insert_users_from_cache(st.session_state['users'])
     if 'reservations' in st.session_state:
-        insert_reservations_from_session(st.session_state['reservations'])
+        insert_reservations_from_cache(st.session_state['reservations'])
     upload_db_to_github()
 
+# 앱 시작 시 GitHub에서 데이터베이스 파일 다운로드 및 로드
 if not os.path.exists("reservation.db"):
     try:
         download_db_from_github()
@@ -65,6 +59,21 @@ if not os.path.exists("reservation.db"):
         st.error(f"Failed to download database from GitHub: {e}")
         # 데이터베이스 파일이 없는 경우 새로 생성
         init_db()
+
+# 데이터베이스 초기화 (기존 파일을 사용할 경우에도 테이블을 확인하고 초기화)
+init_db()
+
+if 'users' not in st.session_state or 'reservations' not in st.session_state:
+    st.session_state['users'], st.session_state['reservations'] = load_from_db()
+
+def save_reservation(student_id, start_time, end_time, reservation_date):
+    st.session_state['reservations'].append({
+        'student_id': student_id,
+        'start_time': start_time,
+        'end_time': end_time,
+        'reservation_date': reservation_date
+    })
+    save_to_db()
 
 def register_user(student_id, name, password, team, team_color):
     st.session_state['users'].append({
@@ -75,39 +84,6 @@ def register_user(student_id, name, password, team, team_color):
         'team_color': team_color
     })
     save_to_db()
-
-# 페이지 설정
-st.set_page_config(page_title="실험실 예약 시스템", layout="wide")
-
-# 데이터베이스 초기화
-init_db()
-
-# 예제: 예약을 저장할 때 데이터베이스를 GitHub에 업로드합니다.
-def save_reservation(student_id, start_time, end_time, reservation_date):
-    insert_reservation(student_id, start_time, end_time, reservation_date)
-    upload_db_to_github()
-
-
-# 로그인 상태 초기화
-if 'logged_in' not in st.session_state:
-    st.session_state['logged_in'] = False
-if 'is_admin' not in st.session_state:
-    st.session_state['is_admin'] = False
-if 'register' not in st.session_state:
-    st.session_state['register'] = False
-if 'selected_date' not in st.session_state:
-    st.session_state['selected_date'] = None
-if 'student_id' not in st.session_state:
-    st.session_state['student_id'] = None
-if 'user_name' not in st.session_state:
-    st.session_state['user_name'] = None
-if 'team' not in st.session_state:
-    st.session_state['team'] = None
-if 'team_color' not in st.session_state:
-    st.session_state['team_color'] = None
-
-# 미리 정해진 10개의 색상
-color_palette = ['#FF5733', '#33FF57', '#3357FF', '#FF33A8', '#FF8C33', '#33FFF3', '#FF33D4', '#D433FF', '#33FF88', '#33A8FF']
 
 # 로그인 페이지
 def login_page():
@@ -144,7 +120,7 @@ def register_page():
     if st.button("회원가입", key="register_button"):
         if len(new_student_id) == 8 and new_student_id.isdigit() and all('\uAC00' <= char <= '\uD7A3' for char in new_name):
             team_color = TEAM_COLORS[new_team]
-            add_user(new_student_id, new_name, new_password, new_team, team_color)
+            register_user(new_student_id, new_name, new_password, new_team, team_color)
             st.success("회원가입이 완료되었습니다.")
             st.session_state['register'] = False  # 회원가입 완료 후 로그인 페이지로 이동
             st.experimental_rerun()
@@ -154,33 +130,8 @@ def register_page():
         st.session_state['register'] = False
         st.experimental_rerun()
 
-def get_reserved_time(team):
-    conn = get_connection()
-    today = date.today()
-    start_of_week = today - timedelta(days=today.weekday())  # 월요일
-    end_of_week = start_of_week + timedelta(days=6)  # 일요일
-
-    query = """
-        SELECT * FROM reservations
-        WHERE student_id IN (SELECT student_id FROM users WHERE team = ?)
-        AND reservation_date BETWEEN ? AND ?
-    """
-    df = pd.read_sql_query(query, conn, params=(team, start_of_week, end_of_week))
-    conn.close()
-
-    total_reserved_time = 0
-    for _, row in df.iterrows():
-        start_time = datetime.strptime(row['start_time'], '%H:%M').time()
-        end_time = datetime.strptime(row['end_time'], '%H:%M').time()
-        reserved_hours = (datetime.combine(date.min, end_time) - datetime.combine(date.min, start_time)).seconds / 3600
-        total_reserved_time += reserved_hours
-
-    return total_reserved_time
 # 메인 페이지
-#import plotly.graph_objects as go
-
 def main_page():
-    #st.set_page_config(page_title="실험실 예약 시스템", layout="wide")
     st.title("실험실 예약 시스템")
     st.write(f"환영합니다, {st.session_state['user_name']}님 (학번: {st.session_state['student_id']})")
 
@@ -213,8 +164,6 @@ def main_page():
 
         # 한국 시간대 설정
         kst = pytz.timezone('Asia/Seoul')
-        #current_time_kst = datetime.now(kst)
-        
         
         # 시간대 리스트 생성
         time_slots = [time(hour, minute).strftime('%H:%M') for hour in range(24) for minute in (0, 30)]
@@ -259,7 +208,7 @@ def main_page():
                 else:
                     # 예약 버튼
                     if st.button("예약하기", key="reservation_confirm_button"):
-                        insert_reservation(st.session_state['student_id'], start_time, end_time, selected_date)
+                        save_reservation(st.session_state['student_id'], start_time, end_time, selected_date)
                         st.success("예약이 완료되었습니다.")
                         st.experimental_rerun()
             else:
@@ -273,7 +222,7 @@ def main_page():
         # 예약 현황 바 차트
         st.subheader(f"{selected_date} 예약 현황")
         filtered_reservations = reservations[reservations['reservation_date'] == selected_date.strftime('%Y-%m-%d')]
-        
+
         # 예약 데이터를 시간대별로 그룹화
         time_blocks = [(datetime.combine(selected_date, time(hour, 0)), datetime.combine(selected_date, time(hour + 1 if hour < 23 else 0, 0))) for hour in range(24)]
         reservation_summary = {block[0]: [] for block in time_blocks}
@@ -315,7 +264,6 @@ def main_page():
                     name=team,
                     marker=dict(color=team_data['time'].apply(lambda x: TEAM_COLORS[team] if team in TEAM_COLORS else 'gray')),
                     showlegend=False if team == '' else True,  # 빈 팀은 레전드 표시 안 함
-                    #width=0.8
                 ))
 
             fig.update_layout(
@@ -324,7 +272,7 @@ def main_page():
                 yaxis_title=" ",
                 yaxis=dict(tickvals=[1], ticktext=['1']),
                 barmode='stack',
-                xaxis=dict(type='category', categoryorder='category ascending')#, tickangle=0, dtick=2)
+                xaxis=dict(type='category', categoryorder='category ascending')
             )
 
             st.plotly_chart(fig)
@@ -335,120 +283,6 @@ def main_page():
         my_page()
     elif selected == "관리자 페이지" and st.session_state['is_admin']:
         admin_page()
-
-    
-# 마이 페이지
-def my_page():
-    st.subheader("마이 페이지")
-    st.write(f"환영합니다, {st.session_state['user_name']}님 (학번: {st.session_state['student_id']}, 팀: {st.session_state['team']}, 팀 컬러: {st.session_state['team_color']})")
-
-    # 개인정보 수정
-    if st.button("개인정보 수정"):
-        st.session_state['edit_profile'] = True
-
-    if st.session_state.get('edit_profile', False):
-        new_name = st.text_input("이름 (한글)", value=st.session_state['user_name'])
-        new_student_id = st.text_input("학번 (8자리 숫자)", value=st.session_state['student_id'])
-        new_team = st.selectbox("팀을 선택하세요", ["CAD_UAV", "Palletrone", "Ja!warm", "Crazyflie"], index=0)
-        
-        if st.button("저장", key="save_profile"):
-            team_color = TEAM_COLORS[new_team]
-            update_user(st.session_state['student_id'], new_name, new_team, new_student_id, team_color)
-            st.session_state['user_name'] = new_name
-            st.session_state['team'] = new_team
-            st.session_state['student_id'] = new_student_id
-            st.session_state['team_color'] = team_color
-            st.success("개인정보가 수정되었습니다.")
-            st.session_state['edit_profile'] = False
-            st.experimental_rerun()
-
-    # 현재 팀의 예약된 시간 계산 및 표시
-    reserved_time = get_reserved_time(st.session_state['team'])
-    remaining_time = 24 - reserved_time
-
-    st.write(f"이번 주 예약 가능 시간: {remaining_time} 시간")
-    st.write(f"이번 주 예약한 시간: {reserved_time} 시간")
-
-    # 가로 바 그래프
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        y=["시간"],
-        x=[remaining_time],
-        name="잔여 시간",
-        orientation='h',
-        marker=dict(color='gray')
-    ))
-    fig.add_trace(go.Bar(
-        y=["시간"],
-        x=[reserved_time],
-        name="예약한 시간",
-        orientation='h',
-        marker=dict(color=st.session_state['team_color'])
-    ))
-
-    fig.update_layout(
-        barmode='stack',
-        title="이번 주 예약 가능 시간",
-        xaxis=dict(showgrid=False, tickvals=[0, 4, 8, 12, 16, 20, 24], ticktext=["0", "4", "8", "12", "16", "20", "24"]),
-        yaxis=dict(showgrid=False),
-        showlegend=False,
-        height=200,
-    )
-
-    st.plotly_chart(fig)
-
-# 관리자 페이지
-def admin_page():
-    st.subheader("관리자 페이지")
-
-    # 모든 유저 목록 조회
-    conn = get_connection()
-    users = pd.read_sql_query("SELECT * FROM users", conn)
-    conn.close()
-
-    # 유저 선택
-    selected_user = st.selectbox("유저를 선택하세요", users['student_id'].tolist())
-
-    if selected_user:
-        user_info = users[users['student_id'] == selected_user].iloc[0]
-        st.write(f"이름: {user_info['name']}")
-        st.write(f"학번: {user_info['student_id']}")
-        st.write(f"팀: {user_info['team']}")
-        st.write(f"팀 컬러: {user_info['team_color']}")
-
-        # 해당 유저의 예약 정보 조회
-        conn = get_connection()
-        reservations = pd.read_sql_query(f"SELECT * FROM reservations WHERE student_id = '{selected_user}'", conn)
-        conn.close()
-
-        st.write("예약 정보:")
-        for _, row in reservations.iterrows():
-            st.write(f"날짜: {row['reservation_date']}, 시작 시간: {row['start_time']}, 종료 시간: {row['end_time']}")
-
-            # 예약 수정
-            if st.button(f"수정 ({row['id']})"):
-                with st.form(key=f"edit_reservation_{row['id']}"):
-                    new_start_time = st.time_input("새 시작 시간", value=datetime.strptime(row['start_time'], '%H:%M:%S').time())
-                    new_end_time = st.time_input("새 종료 시간", value=datetime.strptime(row['end_time'], '%H:%M:%S').time())
-                    if st.form_submit_button("저장"):
-                        conn = get_connection()
-                        c = conn.cursor()
-                        c.execute("UPDATE reservations SET start_time = ?, end_time = ? WHERE id = ?", 
-                                  (new_start_time.strftime('%H:%M:%S'), new_end_time.strftime('%H:%M:%S'), row['id']))
-                        conn.commit()
-                        conn.close()
-                        st.success("예약이 수정되었습니다.")
-                        st.experimental_rerun()
-
-            # 예약 삭제
-            if st.button(f"삭제 ({row['id']})"):
-                conn = get_connection()
-                c = conn.cursor()
-                c.execute("DELETE FROM reservations WHERE id = ?", (row['id'],))
-                conn.commit()
-                conn.close()
-                st.success("예약이 삭제되었습니다.")
-                st.experimental_rerun()
 
 # 페이지 라우팅
 if st.session_state['logged_in']:
