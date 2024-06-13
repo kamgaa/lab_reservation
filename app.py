@@ -55,6 +55,7 @@ def save_to_db():
 if not os.path.exists("reservation.db"):
     try:
         download_db_from_github()
+        load_from_db()
     except Exception as e:
         st.error(f"Failed to download database from GitHub: {e}")
         # 데이터베이스 파일이 없는 경우 새로 생성
@@ -63,8 +64,13 @@ if not os.path.exists("reservation.db"):
 # 데이터베이스 초기화 (기존 파일을 사용할 경우에도 테이블을 확인하고 초기화)
 init_db()
 
-if 'users' not in st.session_state or 'reservations' not in st.session_state:
-    st.session_state['users'], st.session_state['reservations'] = load_from_db()
+#if 'users' not in st.session_state or 'reservations' not in st.session_state:
+#    st.session_state['users'], st.session_state['reservations'] = load_from_db()
+if 'users' not in st.session_state:
+    st.session_state['users'] = []
+if 'reservations' not in st.session_state:
+    st.session_state['reservations'] = []
+
 
 def save_reservation(student_id, start_time, end_time, reservation_date):
     st.session_state['reservations'].append({
