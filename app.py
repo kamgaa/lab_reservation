@@ -65,6 +65,17 @@ if not os.path.exists("reservation.db"):
         st.error(f"Failed to download database from GitHub: {e}")
         # 데이터베이스 파일이 없는 경우 새로 생성
         init_db()
+
+def register_user(student_id, name, password, team, team_color):
+    st.session_state['users'].append({
+        'student_id': student_id,
+        'name': name,
+        'password': password,
+        'team': team,
+        'team_color': team_color
+    })
+    save_to_db()
+
 # 페이지 설정
 st.set_page_config(page_title="실험실 예약 시스템", layout="wide")
 
