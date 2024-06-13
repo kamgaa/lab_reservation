@@ -29,9 +29,15 @@ def download_db_from_github():
 
 @st.cache_resource
 def load_from_db():
+#    users = get_users().to_dict(orient='records')
+#    reservations = get_reservations().to_dict(orient='records')
+#    return users, reservations
     users = get_users().to_dict(orient='records')
     reservations = get_reservations().to_dict(orient='records')
-    return users, reservations
+    st.session_state['users'] = users
+    st.session_state['reservations'] = reservations
+
+
 
 def upload_db_to_github():
     g = Github(GITHUB_TOKEN)
