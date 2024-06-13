@@ -72,6 +72,10 @@ init_db()
 
 #if 'users' not in st.session_state or 'reservations' not in st.session_state:
 #    st.session_state['users'], st.session_state['reservations'] = load_from_db()
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+if 'register' not in st.session_state:
+    st.session_state['register'] = False
 if 'users' not in st.session_state:
     st.session_state['users'] = []
 if 'reservations' not in st.session_state:
